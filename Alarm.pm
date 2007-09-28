@@ -11,9 +11,16 @@ use Time::HiRes;
 use Catalyst::Exception ();
 use NEXT;
 
-use Sys::SigAction qw( set_sig_handler );
+# Sys::SigAction doesn't help on Win32 systems
+# because Win32 doesn't use POSIX signals
+our $WIN32 = 1;
+unless ($^O eq 'MSWin32')
+{
+    require Sys::SigAction;
+    $WIN32 = 0;
+}
 
-our $VERSION       = 0.01;
+our $VERSION       = 0.02;
 our $TIMEOUT       = 180;
 our $LOCAL_TIMEOUT = 30;
 
@@ -85,23 +92,32 @@ sub prepare
         $alarm{handler} = $handler;
         $alarm{failed}  = [];
 
-        $alarm{sig_handler} = set_sig_handler(
-            'ALRM',
-            sub {
-                $c->alarm->on(1);
-                $c->alarm->sounded(Time::HiRes::gettimeofday());
-                $c->error(
-                          "Global Alarm sounded at ~$timeout seconds: "
-                            . Time::HiRes::tv_interval(
+        my $alarm_handler = sub {
+            $c->alarm->on(1);
+            $c->alarm->sounded(Time::HiRes::gettimeofday());
+            $c->error(
+                      "Global Alarm sounded at ~$timeout seconds: "
+                        . Time::HiRes::tv_interval(
                                             $c->alarm->start, $c->alarm->sounded
-                            )
-                         );
+                        )
+                     );
 
-                push(@{$c->alarm->{failed}}, $c->action->name);
-                &$handler($c, 1);
-            },
-            {safe => 1}
-                                             );
+            push(@{$c->alarm->{failed}}, $c->action->name);
+            &$handler($c, 1);
+        };
+
+        if ($WIN32)
+        {
+            $SIG{ALRM} = $alarm_handler;
+        }
+        else
+        {
+
+            $alarm{sig_handler} =
+              Sys::SigAction::set_sig_handler('ALRM', $alarm_handler,
+                                              {safe => 1});
+
+        }
 
         # set alarm -- see NOTE in timeout about HiRes::alarm()
         #Time::HiRes::alarm($timeout);
@@ -141,7 +157,7 @@ sub finalize
 
     # debugging
     #$c->log->dumper($c->alarm);
-    
+
     # SigAction reference count gets screwy sometimes (at least in tests)
     # so just delete this explicitly since we no longer need it anyway
     delete $c->alarm->{sig_handler};
@@ -178,7 +194,7 @@ sub timeout
     {
         $conf = $c->config->{alarm};
     }
-    
+
     if (ref $_[0])
     {
         $timeout = $_[0]->{timeout} || $conf->{timeout};
@@ -189,9 +205,9 @@ sub timeout
         my %e = @_;
         $timeout = $e{timeout} || $conf->{timeout};
         @arg = ref $e{action} ? @{$e{action}} : $e{action};
-        
+
         # just in case we called as 'foo',[@args] and not as => pairs
-        if (!scalar(@arg) || ! defined $arg[0])
+        if (!scalar(@arg) || !defined $arg[0])
         {
             @arg = @_;
         }
@@ -209,7 +225,7 @@ sub timeout
         # avoid spurious warning
         no warnings;
         Catalyst::Exception->throw("Alarm timeout value is invalid: $timeout");
-    }    
+    }
 
     my $e = join(', ', @arg);
     my @ret;
@@ -220,25 +236,28 @@ sub timeout
 
     my $prev_alarm = 0;
 
+    my $alarm_handler = sub {
+        $c->alarm->on(1);
+        push @{$c->alarm->{failed}}, $e;
+
+        $c->error("Local Alarm sounded after $timeout seconds for action: $e");
+
+        &$handler($c, \@ret);
+
+    };
+
     eval {
-        my $h = set_sig_handler(
-            'ALRM',
-            sub {
-                $c->alarm->on(1);
-                push @{$c->alarm->{failed}}, $e;
-
-                $c->error(
-                     "Local Alarm sounded after $timeout seconds for action: $e"
-                );
-
-                &$handler($c, \@ret);
-
-            },
-            {
-             safe => 1
-
-            }
-        );
+        my $h = $SIG{ALRM};
+        if ($WIN32)
+        {
+            $SIG{ALRM} = $alarm_handler;
+        }
+        else
+        {
+            $h =
+              Sys::SigAction::set_sig_handler('ALRM', $alarm_handler,
+                                              {safe => 1});
+        }
 
         #$c->log->debug( Dumper $h );
         my $sv = [Time::HiRes::gettimeofday()];
@@ -277,16 +296,21 @@ sub timeout
             $prev_alarm = $prev_alarm - int($intv);
             $prev_alarm = 1 if $prev_alarm <= 0;
             $c->log->debug("prev_alarm = $prev_alarm")
-                if $c->debug;
+              if $c->debug;
         }
 
         CORE::alarm($prev_alarm);
-      };
 
-      # reset no matter what.
-      #Time::HiRes::alarm(0);
-      
-      CORE::alarm($prev_alarm);
+        if ($WIN32)
+        {
+            $SIG{ALRM} = $h;
+        }
+    };
+
+    # reset no matter what.
+    #Time::HiRes::alarm(0);
+
+    CORE::alarm($prev_alarm);
 
     # despite the forward() pod claim to the contrary,
     # there is a bug in Catalyst::forward() that returns
@@ -497,11 +521,55 @@ Access the Catalyst::Alarm object.
 
 B<NOTE:> This object won't exist if you do not configure the alarm.
 
+See Catalyst::Alarm METHODS section below.
+
+=head2 timeout( I<stuff_to_forward> )
+
+A wrapper around the standard forward() call.
+
+If the I<stuff_to_forward> has not returned before the alarm goes off,
+timeout() will return undef and an error is set with the error() method.
+
+On success, returns same thing forward() would return.
+
+If you set a default C<timeout> value in config(), you can use timeout() just like forward().
+If you want to override any default timeout value, pass either a hashref or an array of
+key/value pairs. The supported key names are C<action> and C<timeout>.
+
+Examples:
+
+    $c->timeout( 'action' );  # use default timeout (throws exception if not set)
+
+    $c->timeout( 
+        action  => 'action',
+        timeout => 40,    # override any defaults
+    );
+
+    $c->timeout( {  # or as a hashref
+        timeout => 40,
+        action  => [ qw/MyApp::Controller::Bar snafu/, ['some option'] ],
+    });
+
+
+=head2 prepare
+
+Overridden internally.
+
+=head2 forward
+
+Overridden internally.
+
+=head2 finalize
+
+Overridden internally.
+
+=head1 Catalyst::Alarm METHODS
+
+=head2 off
+
 The Catalyst::Alarm object has one non-accessor method: off.
 
-=head3 off
-
-The off method will turn all alarms off, including the global alarm. If you 
+The off() method will turn all alarms off, including the global alarm. If you 
 later call timeout() in the same request cycle, the alarm will be reset as indicated
 in timeout().
 
@@ -592,46 +660,6 @@ they are likely useless to you and exist for the amusement of the author, debugg
 and perhaps other plugins that may make use of them.
 
 
-=head2 timeout( I<stuff_to_forward> )
-
-A wrapper around the standard forward() call.
-
-If the I<stuff_to_forward> has not returned before the alarm goes off,
-timeout() will return undef and an error is set with the error() method.
-
-On success, returns same thing forward() would return.
-
-If you set a default C<timeout> value in config(), you can use timeout() just like forward().
-If you want to override any default timeout value, pass either a hashref or an array of
-key/value pairs. The supported key names are C<action> and C<timeout>.
-
-Examples:
-
-    $c->timeout( 'action' );  # use default timeout (throws exception if not set)
-
-    $c->timeout( 
-        action  => 'action',
-        timeout => 40,    # override any defaults
-    );
-
-    $c->timeout( {  # or as a hashref
-        timeout => 40,
-        action  => [ qw/MyApp::Controller::Bar snafu/, ['some option'] ],
-    });
-
-
-=head2 prepare
-
-Overridden internally.
-
-=head2 forward
-
-Overridden internally.
-
-=head2 finalize
-
-Overridden internally.
-
 =head1 BUGS
 
 Using a global alarm together with the C<forward> config feature can have unforeseen
@@ -653,8 +681,9 @@ Peter Karman <pkarman@atomiclearning.com>.
 
 =head1 CREDITS
 
-Thanks to Bill Moseley <moseley@hank.org> and Yuval Kogman <nothingmuch@woobling.org>
-for feedback and API suggestions.
+Thanks to Bill Moseley and Yuval Kogman for feedback and API suggestions.
+
+Thanks to Nilson Santos Figueiredo Junior for the Win32 suggestions.
 
 =head1 COPYRIGHT
 
@@ -667,4 +696,3 @@ This code is licensed under the same terms as Perl itself.
 L<mod_perl chapter on alarm()|http://modperlbook.org/html/ch06_10.html>,
 L<DBI>, L<Sys::SigAction>, L<Time::HiRes>
 
-=cut

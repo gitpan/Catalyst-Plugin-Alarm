@@ -6,7 +6,7 @@ WriteMakefile(
     NAME              => 'Catalyst::Plugin::Alarm',
     VERSION_FROM      => 'Alarm.pm',
     PREREQ_PM         => {
-                     'Sys::SigAction' => 0.04,
+                     'Sys::SigAction' => 0.04, 
                      'Time::HiRes'    => 1.0
                      }, 
     AUTHOR            => 'Peter Karman <pkarman@atomiclearning.com>',

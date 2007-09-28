@@ -2,7 +2,7 @@ package TestApp;
 use strict;
 use warnings;
 
-use Test::More tests => 9;
+use Test::More tests => 7;
 
 use Catalyst qw[ Alarm];
 __PACKAGE__->config(
@@ -18,7 +18,6 @@ __PACKAGE__->config(
             else
             {
                 diag(" .... global alarm went off");
-
                 #$_[0]->alarm->on(0);   # leave it on to test
             }
         },
@@ -32,7 +31,14 @@ sub sleeper : Local
 {
     my ($self, $c, $l) = @_;
     $l ||= 0;
-    sleep $l;
+    
+    # sleep() may cause alarm() to fail on Win32,
+    # so mimic the idea
+    my $finish = time() + $l;
+    while( $finish > time() )
+    {
+        1;
+    }
 
     $c->response->output('ok');
 
@@ -45,10 +51,6 @@ sub foo : Global
 
     can_ok($c, 'alarm');
 
-    # long doesn't use sleep()
-    ok($c->timeout('long', [10000000]), "long");
-
-    $self->clear($c);
 
     ok($c->timeout(action => ['sleeper', [2]], timeout => 1),
         "sleeper with args");
@@ -61,7 +63,7 @@ sub foo : Global
     $self->clear($c);
 
     # force global alarm to go off
-    sleep $c->config->{alarm}->{global};
+    $c->forward('sleeper',[$c->config->{alarm}->{global}]);
 
     ok($c->alarm->on, "global alarm sounded");
 
@@ -69,22 +71,6 @@ sub foo : Global
 
 }
 
-sub long : Local
-{
-    my ($self, $c, $top) = @_;
-    my $l = 0;
-    $top ||= 100000;
-    while ($l++ < $top)
-    {
-        1;
-
-        #carp $l unless $l % 100;
-    }
-
-    $c->response->output("l = $l");
-
-    $self->clear($c);
-}
 
 sub clear
 {
@@ -107,6 +93,8 @@ sub clear
         $c->log->debug("no error")
           if $c->debug;
     }
+    
+    1;
 }
 
 package main;
@@ -115,7 +103,6 @@ use Test::More;
 
 ok(get('/sleeper'),    "get /sleeper");
 ok(get('/sleeper/10'), "get /sleeper/10");
-ok(get('/long'),       "get /long");
 ok(get('/foo'),        "get /foo");
 
 1;

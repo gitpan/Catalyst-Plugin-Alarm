@@ -20,7 +20,7 @@ unless ($^O eq 'MSWin32')
     $WIN32 = 0;
 }
 
-our $VERSION       = 0.02;
+our $VERSION       = 0.03;
 our $TIMEOUT       = 180;
 our $LOCAL_TIMEOUT = 30;
 

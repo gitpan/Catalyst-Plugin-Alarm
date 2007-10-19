@@ -1,10 +1,12 @@
 # http://module-build.sourceforge.net/META-spec.html
 #XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
 name:         Catalyst-Plugin-Alarm
-version:      0.02
+version:      0.03
 version_from: Alarm.pm
 installdirs:  site
 requires:
+    Catalyst::Runtime:             5.7
+    Class::Accessor::Fast:         0
     Sys::SigAction:                0.04
     Time::HiRes:                   1
 

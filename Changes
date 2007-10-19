@@ -5,3 +5,7 @@ Revision history for Catalyst::Plugin::Alarm.
 
 0.02  Thu May  4 11:39:45 CDT 2006
     - reorg POD to put C::Alarm methods together
+
+0.03  19 Oct 2007
+    - fixed Makefile.pm to add dependencies
+

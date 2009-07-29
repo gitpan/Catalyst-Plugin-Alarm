@@ -1,14 +1,26 @@
-# http://module-build.sourceforge.net/META-spec.html
-#XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
-name:         Catalyst-Plugin-Alarm
-version:      0.03
-version_from: Alarm.pm
-installdirs:  site
+--- #YAML:1.0
+name:               Catalyst-Plugin-Alarm
+version:            0.04
+abstract:           ~
+author:
+    - Peter Karman <pkarman@atomiclearning.com>
+license:            unknown
+distribution_type:  module
+configure_requires:
+    ExtUtils::MakeMaker:  0
+build_requires:
+    ExtUtils::MakeMaker:  0
 requires:
-    Catalyst::Runtime:             5.7
-    Class::Accessor::Fast:         0
-    Sys::SigAction:                0.04
-    Time::HiRes:                   1
-
-distribution_type: module
-generated_by: ExtUtils::MakeMaker version 6.17
+    Catalyst::Runtime:    5.7
+    Class::Accessor::Fast:  0
+    MRO::Compat:          0
+    Sys::SigAction:       0.04
+    Time::HiRes:          1
+no_index:
+    directory:
+        - t
+        - inc
+generated_by:       ExtUtils::MakeMaker version 6.54
+meta-spec:
+    url:      http://module-build.sourceforge.net/META-spec-v1.4.html
+    version:  1.4

@@ -9,7 +9,8 @@ use Data::Dumper;
 use Time::HiRes;
 
 use Catalyst::Exception ();
-use NEXT;
+use MRO::Compat;
+use mro 'c3';
 
 # Sys::SigAction doesn't help on Win32 systems
 # because Win32 doesn't use POSIX signals
@@ -20,7 +21,7 @@ unless ($^O eq 'MSWin32')
     $WIN32 = 0;
 }
 
-our $VERSION       = 0.03;
+our $VERSION       = 0.04;
 our $TIMEOUT       = 180;
 our $LOCAL_TIMEOUT = 30;
 
@@ -35,7 +36,7 @@ BEGIN
 sub prepare
 {
     my $class = shift;
-    my $c     = $class->NEXT::prepare(@_);
+    my $c     = $class->next::method(@_);
 
     return $c unless exists $c->config->{alarm};
 
@@ -138,13 +139,12 @@ sub finalize
 {
     my $c = shift;
 
-    if (!$c->alarm || !$c->alarm->{start})
-    {
-        $c->NEXT::finalize(@_);
+    if (!$c->alarm || !$c->alarm->{start}) {
+        $c->next::method(@_);
         return 1;
     }
 
-    # this stuff may all be irrelevant since NEXT finalize()
+    # this stuff may all be irrelevant since next::method
     # has already been called, but for completeness' sake.
 
     $c->alarm->stop(Time::HiRes::gettimeofday());
@@ -162,7 +162,7 @@ sub finalize
     # so just delete this explicitly since we no longer need it anyway
     delete $c->alarm->{sig_handler};
 
-    $c->NEXT::finalize(@_);
+    $c->next::method(@_);
 
     1;
 }
@@ -170,6 +170,10 @@ sub finalize
 sub forward
 {
     my $c = shift;
+
+    # in Catalyst 5.8x stack is undef when we need it
+    # so prime it here.
+    $c->{stack} = [] unless $c->stack;
 
     if ($c->alarm && $c->alarm->{forward})
     {
@@ -693,6 +697,6 @@ This code is licensed under the same terms as Perl itself.
 
 =head1 SEE ALSO
 
-L<mod_perl chapter on alarm()|http://modperlbook.org/html/ch06_10.html>,
+http://modperlbook.org/html/ch06_10.html,
 L<DBI>, L<Sys::SigAction>, L<Time::HiRes>
 

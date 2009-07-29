@@ -9,3 +9,8 @@ Revision history for Catalyst::Plugin::Alarm.
 0.03  19 Oct 2007
     - fixed Makefile.pm to add dependencies
 
+0.04  29 July 2009
+    - updates for Catalyst 5.8, including switch to MRO::Compat
+      instead of NEXT.
+
+

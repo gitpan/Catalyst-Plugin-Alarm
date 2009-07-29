@@ -10,6 +10,7 @@ WriteMakefile(
                      'Time::HiRes'    => 1.0,
                      'Class::Accessor::Fast' => 0,
                      'Catalyst::Runtime'     => 5.7,
+                     'MRO::Compat' => 0,
 
                      }, 
     AUTHOR            => 'Peter Karman <pkarman@atomiclearning.com>',

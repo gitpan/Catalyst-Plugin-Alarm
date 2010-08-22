@@ -4,6 +4,9 @@ MANIFEST
 README
 t/00-load.t
 t/01-alarm.t
+t/02-native-signals.t
+t/TestApp/Controller/Root.pm
+t/TestApp.pm
 t/pod-coverage.t
 t/pod.t
 Alarm.pm

@@ -13,4 +13,6 @@ Revision history for Catalyst::Plugin::Alarm.
     - updates for Catalyst 5.8, including switch to MRO::Compat
       instead of NEXT.
 
-
+0.05  21 Aug 2010
+    - add 'use_native_signals' config option to avoid dependency
+      on Sys::SigAction (see https://rt.cpan.org/Ticket/Display.html?id=60566)

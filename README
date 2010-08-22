@@ -1,7 +1,7 @@
-Catalyst::Plugin::Alarm version 0.01
+Catalyst::Plugin::Alarm
 ================
 
-Implements Sys::SigAction alarms with Time::HiRes for Catalyst.
+Implements alarms with Time::HiRes for Catalyst.
 
 INSTALLATION
 
@@ -16,7 +16,7 @@ DEPENDENCIES
 
 This module requires these other modules and libraries:
 
-  Sys::SigAction
+  Sys::SigAction (optional)
   Time::HiRes
 
 COPYRIGHT AND LICENCE

@@ -14,27 +14,40 @@ use mro 'c3';
 
 # Sys::SigAction doesn't help on Win32 systems
 # because Win32 doesn't use POSIX signals
-our $WIN32 = 1;
-unless ($^O eq 'MSWin32')
-{
-    require Sys::SigAction;
-    $WIN32 = 0;
+our $USE_NATIVE_SIGNALS = 0;
+if ( $^O eq 'MSWin32' ) {
+    $USE_NATIVE_SIGNALS = 1;
 }
 
-our $VERSION       = 0.04;
+our $VERSION       = 0.05;
 our $TIMEOUT       = 180;
 our $LOCAL_TIMEOUT = 30;
 
 # add a \. if we ever support HiRes alarm()
 my $ALARM_RE = qr/^[\d]+$/;
 
-BEGIN
-{
+BEGIN {
     __PACKAGE__->mk_accessors(qw/ alarm /);
 }
 
-sub prepare
-{
+sub setup_finalize {
+    my $c   = shift;
+    my $ret = $c->next::method(@_);
+
+    my %conf = %{ $c->config->{alarm} };
+
+    if ( $conf{use_native_signals} ) {
+        $USE_NATIVE_SIGNALS = 1;
+    }
+    else {
+        require Sys::SigAction;    # defer till runtime
+    }
+
+    return $ret;
+}
+
+# must call on every request
+sub prepare {
     my $class = shift;
     my $c     = $class->next::method(@_);
 
@@ -43,7 +56,7 @@ sub prepare
     my %alarm;
 
     # copy of config for easy checking and temp overriding
-    my %conf = %{$c->config->{alarm}};
+    my %conf = %{ $c->config->{alarm} };
 
     # should we override forward method?
     $alarm{forward} = $conf{forward} || 0;
@@ -51,72 +64,70 @@ sub prepare
     # check if we should override forward() based on regex
     if (    exists $conf{timeout}
         and exists $conf{override}
-        and $conf{timeout})
+        and $conf{timeout} )
     {
         my $re = $conf{override}->{re} || '';
-        if ($re && $c->req->path =~ m/$re/)
-        {
+        if ( $re && $c->req->path =~ m/$re/ ) {
             $alarm{override} = $c->req->path;
-            if ($c->debug)
-            {
-                $c->log->debug("found alarm override for: " . $c->req->path);
-                $c->log->debug("setting this request global alarm to "
-                               . $conf{override}->{timeout});
+            if ( $c->debug ) {
+                $c->log->debug(
+                    "found alarm override for: " . $c->req->path );
+                $c->log->debug( "setting this request global alarm to "
+                        . $conf{override}->{timeout} );
             }
             $conf{global} = $conf{override}->{timeout};
         }
     }
 
     # special case - allow for disable global timer
-    if (exists $conf{global}
-        && $conf{global} != 0)
+    if ( exists $conf{global}
+        && $conf{global} != 0 )
     {
         my $timeout = $conf{global};
 
         my $handler = $conf{handler}
-          || sub { Catalyst::Exception->throw("Global Alarm timeout: $timeout") };
+            || sub {
+            Catalyst::Exception->throw("Global Alarm timeout: $timeout");
+            };
 
-        if (!$timeout or $timeout !~ m/$ALARM_RE/)
-        {
+        if ( !$timeout or $timeout !~ m/$ALARM_RE/ ) {
 
             # avoid spurious warning
             no warnings;
 
             #$timeout = '' unless defined $timeout;
             Catalyst::Exception->throw(
-                             "Global Alarm timeout value is invalid: $timeout");
+                "Global Alarm timeout value is invalid: $timeout");
         }
 
         # configure alarm
         $alarm{timeout} = $timeout;
-        $alarm{start}   = [Time::HiRes::gettimeofday()];
+        $alarm{start}   = [ Time::HiRes::gettimeofday() ];
         $alarm{handler} = $handler;
         $alarm{failed}  = [];
 
         my $alarm_handler = sub {
             $c->alarm->on(1);
-            $c->alarm->sounded(Time::HiRes::gettimeofday());
+            $c->alarm->sounded( Time::HiRes::gettimeofday() );
             $c->error(
-                      "Global Alarm sounded at ~$timeout seconds: "
-                        . Time::HiRes::tv_interval(
-                                            $c->alarm->start, $c->alarm->sounded
-                        )
-                     );
+                "Global Alarm sounded at ~$timeout seconds: "
+                    . Time::HiRes::tv_interval(
+                    $c->alarm->start, $c->alarm->sounded
+                    )
+            );
 
-            push(@{$c->alarm->{failed}}, $c->action->name);
-            &$handler($c, 1);
+            push( @{ $c->alarm->{failed} }, $c->action->name );
+            &$handler( $c, 1 );
         };
 
-        if ($WIN32)
-        {
+        if ($USE_NATIVE_SIGNALS) {
             $SIG{ALRM} = $alarm_handler;
         }
-        else
-        {
+        else {
 
-            $alarm{sig_handler} =
-              Sys::SigAction::set_sig_handler('ALRM', $alarm_handler,
-                                              {safe => 1});
+            $alarm{sig_handler}
+                = Sys::SigAction::set_sig_handler( 'ALRM', $alarm_handler,
+                { safe => 1 } );
 
         }
 
@@ -125,21 +136,20 @@ sub prepare
         CORE::alarm($timeout);
 
         $c->log->debug("global alarm set for $timeout seconds")
-          if $c->debug;
+            if $c->debug;
 
     }
 
     # set accessor
-    $c->alarm(bless \%alarm, 'Catalyst::Alarm');
+    $c->alarm( bless \%alarm, 'Catalyst::Alarm' );
 
     return $c;
 }
 
-sub finalize
-{
+sub finalize {
     my $c = shift;
 
-    if (!$c->alarm || !$c->alarm->{start}) {
+    if ( !$c->alarm || !$c->alarm->{start} ) {
         $c->next::method(@_);
         return 1;
     }
@@ -147,9 +157,9 @@ sub finalize
     # this stuff may all be irrelevant since next::method
     # has already been called, but for completeness' sake.
 
-    $c->alarm->stop(Time::HiRes::gettimeofday());
+    $c->alarm->stop( Time::HiRes::gettimeofday() );
     $c->alarm->total(
-               Time::HiRes::tv_interval($c->alarm->{start}, $c->alarm->{stop}));
+        Time::HiRes::tv_interval( $c->alarm->{start}, $c->alarm->{stop} ) );
 
     # turn off alarm
     #Time::HiRes::alarm(0);
@@ -167,127 +177,116 @@ sub finalize
     1;
 }
 
-sub forward
-{
+sub forward {
     my $c = shift;
 
     # in Catalyst 5.8x stack is undef when we need it
     # so prime it here.
     $c->{stack} = [] unless $c->stack;
 
-    if ($c->alarm && $c->alarm->{forward})
-    {
+    if ( $c->alarm && $c->alarm->{forward} ) {
         return $c->timeout(@_);
     }
 
-    return $c->dispatcher->forward($c, @_);
+    return $c->dispatcher->forward( $c, @_ );
 }
 
-sub timeout
-{
+sub timeout {
     my $c = shift;
-    my ($timeout, @arg);
+    my ( $timeout, @arg );
 
     # set a default if not configured
     my $conf = {};
-    if (!exists $c->config->{alarm})
-    {
+    if ( !exists $c->config->{alarm} ) {
         $conf->{timeout} = $LOCAL_TIMEOUT;
     }
-    else
-    {
+    else {
         $conf = $c->config->{alarm};
     }
 
-    if (ref $_[0])
-    {
+    if ( ref $_[0] ) {
         $timeout = $_[0]->{timeout} || $conf->{timeout};
-        @arg = ref $_[0]->{action} ? @{$_[0]->{action}} : $_[0]->{action};
+        @arg = ref $_[0]->{action} ? @{ $_[0]->{action} } : $_[0]->{action};
     }
-    elsif (!(@_ % 2))
-    {
+    elsif ( !( @_ % 2 ) ) {
         my %e = @_;
         $timeout = $e{timeout} || $conf->{timeout};
-        @arg = ref $e{action} ? @{$e{action}} : $e{action};
+        @arg = ref $e{action} ? @{ $e{action} } : $e{action};
 
         # just in case we called as 'foo',[@args] and not as => pairs
-        if (!scalar(@arg) || !defined $arg[0])
-        {
+        if ( !scalar(@arg) || !defined $arg[0] ) {
             @arg = @_;
         }
 
     }
-    else
-    {
+    else {
         @arg     = @_;
         $timeout = $conf->{timeout};
     }
 
-    if (!defined $timeout or $timeout !~ m/$ALARM_RE/)
-    {
+    if ( !defined $timeout or $timeout !~ m/$ALARM_RE/ ) {
 
         # avoid spurious warning
         no warnings;
-        Catalyst::Exception->throw("Alarm timeout value is invalid: $timeout");
+        Catalyst::Exception->throw(
+            "Alarm timeout value is invalid: $timeout");
     }
 
-    my $e = join(', ', @arg);
+    my $e = join( ', ', @arg );
     my @ret;
     $c->alarm->on(0);
 
     my $handler = $c->config->{alarm}->{handler}
-      || sub { Catalyst::Exception->throw("Local Alarm timeout for: $e") };
+        || sub { Catalyst::Exception->throw("Local Alarm timeout for: $e") };
 
     my $prev_alarm = 0;
 
     my $alarm_handler = sub {
         $c->alarm->on(1);
-        push @{$c->alarm->{failed}}, $e;
+        push @{ $c->alarm->{failed} }, $e;
 
-        $c->error("Local Alarm sounded after $timeout seconds for action: $e");
+        $c->error(
+            "Local Alarm sounded after $timeout seconds for action: $e");
 
-        &$handler($c, \@ret);
+        &$handler( $c, \@ret );
 
     };
 
     eval {
         my $h = $SIG{ALRM};
-        if ($WIN32)
-        {
+        if ($USE_NATIVE_SIGNALS) {
             $SIG{ALRM} = $alarm_handler;
         }
-        else
-        {
-            $h =
-              Sys::SigAction::set_sig_handler('ALRM', $alarm_handler,
-                                              {safe => 1});
+        else {
+            $h = Sys::SigAction::set_sig_handler( 'ALRM', $alarm_handler,
+                { safe => 1 } );
         }
 
         #$c->log->debug( Dumper $h );
-        my $sv = [Time::HiRes::gettimeofday()];
+        my $sv = [ Time::HiRes::gettimeofday() ];
 
-        #$c->log->debug("setting alarm for $timeout seconds");
-        # Time::HiRes version of alarm() doing wacky things like going off after
-        # only 1.4.. seconds when $timeout is much greater
-        # TODO see if I am just using it wrong.
-        #my $prev_alarm = Time::HiRes::alarm($timeout);
+      #$c->log->debug("setting alarm for $timeout seconds");
+      # Time::HiRes version of alarm() doing wacky things like going off after
+      # only 1.4.. seconds when $timeout is much greater
+      # TODO see if I am just using it wrong.
+      #my $prev_alarm = Time::HiRes::alarm($timeout);
         $prev_alarm = CORE::alarm($timeout);
         $c->log->debug("previous alarm was $prev_alarm")
-          if $c->debug;
+            if $c->debug;
 
-        @ret = $c->dispatcher->forward($c, @arg);
+        @ret = $c->dispatcher->forward( $c, @arg );
 
         # NOTE that on alarm, if the default handler is used, we never
         # reach this point. This exists mostly for debugging
         # with the test scripts.
 
         #$c->log->debug("came back");
-        my $ev   = [Time::HiRes::gettimeofday()];
-        my $intv = Time::HiRes::tv_interval($sv, $ev);
+        my $ev = [ Time::HiRes::gettimeofday() ];
+        my $intv = Time::HiRes::tv_interval( $sv, $ev );
 
         #warn "intv = $intv\n";
         $c->log->debug("resetting alarm after $intv seconds")
-          if $c->debug;
+            if $c->debug;
 
         #Time::HiRes::alarm(0);
 
@@ -295,18 +294,16 @@ sub timeout
         # so do our best to restore it, minus the time we just spent
         # NOTE that because CORE alarm uses only ints that we end
         # up taking longer for global alarm than originally configed.
-        if ($prev_alarm > 0)
-        {
+        if ( $prev_alarm > 0 ) {
             $prev_alarm = $prev_alarm - int($intv);
             $prev_alarm = 1 if $prev_alarm <= 0;
             $c->log->debug("prev_alarm = $prev_alarm")
-              if $c->debug;
+                if $c->debug;
         }
 
         CORE::alarm($prev_alarm);
 
-        if ($WIN32)
-        {
+        if ($USE_NATIVE_SIGNALS) {
             $SIG{ALRM} = $h;
         }
     };
@@ -323,7 +320,7 @@ sub timeout
     # Otherwise, we'll break existing code that relies on
     # that scalar behaviour.
 
-    return $c->alarm->on ? undef: $ret[0];
+    return $c->alarm->on ? undef : $ret[0];
 }
 
 1;
@@ -333,22 +330,21 @@ package Catalyst::Alarm;
 use base qw/Class::Accessor::Fast/;
 __PACKAGE__->mk_accessors(
     qw/
-      timeout
-      start
-      stop
-      total
-      sig_handler
-      handler
-      failed
-      sounded
-      forward
-      override
-      on
-      /
+        timeout
+        start
+        stop
+        total
+        sig_handler
+        handler
+        failed
+        sounded
+        forward
+        override
+        on
+        /
 );
 
-sub off
-{
+sub off {
 
     #Time::HiRes::alarm(0);
     CORE::alarm(0);
@@ -371,24 +367,21 @@ Catalyst::Plugin::Alarm - call an action with a timeout value
 
  package MyApp;
  use Catalyst qw( Alarm );
- MyApp->config->{alarm} = {
+ MyApp->config( alarm => {
     timeout => 60,
     global  => 120,
     handler => sub { # do something if alarm sounds }
-    };
+ });
  
- sub default : Private
- {
+ sub default : Private {
      my ($self,$c) = @_;
-     unless( $c->timeout('foo') )
-     {
+     unless( $c->timeout('foo') ) {
         $c->stash->{error} = "Sorry to keep you waiting. There was a problem.";
         return;
      }
  }
  
- sub foo : Private
- {
+ sub foo : Private {
     my ($self,$c) = @_;
     sleep 61;  
  }
@@ -462,14 +455,12 @@ Example:
 
   __PACKAGE__->config( alarm => {
     handler => sub {
-        if (ref $_[1])
-        {
+        if (ref $_[1]) {
             $_[0]->log->error(" .... local alarm went off!!");
             $_[1]->[0] = 'some return value';
             $_[0]->alarm->on(0);    # turn 'off' the alarm flag
         }
-        else
-        {
+        else {
             $_[0]->log->error(" .... global alarm went off");
             $_[0]->alarm->on(1);
         }
@@ -485,12 +476,12 @@ expression match against $c->request->path().
 
 Example:
 
-  __PACKAGE__->config( alarm => {
-         override => {
-            re=> qr{/ajax/}, 
-            timeout=> 3
-           }
-         });
+ __PACKAGE__->config( alarm => {
+    override => {
+        re=> qr{/ajax/}, 
+        timeout=> 3
+    }
+ });
  
 Will set the global timeout value to 3 if the request->path matches C</ajax>.
 The global timeout value will persist only for the life of that request.
@@ -505,7 +496,7 @@ Example:
  __PACKAGE__->config( alarm => { 
     forward => 1, 
     timeout => 10 
-   });
+ });
  
 Will automatically call timeout() with a default value of 10 seconds, wherever your
 code calls forward().
@@ -513,6 +504,11 @@ code calls forward().
 B<NOTE:> You must assign a default C<timeout> value to use the C<forward>
 feature.
 
+=item use_native_signals
+
+Default value is false. If set to a true value, Sys::SigAction will not be used
+and instead the built-in %SIG handlers will be used. This is necessary for the plugin
+to work under Win32 systems and in some cases with FCGI.
 
 =back
 
@@ -555,6 +551,10 @@ Examples:
     });
 
 
+=head2 setup_finalize
+
+Overridden internally.
+
 =head2 prepare
 
 Overridden internally.
@@ -584,13 +584,13 @@ snooze() turns off the alarm completely for the entire request cycle.
 Example:
 
  __PACKAGE__->config( alarm => {
-                             override => {
-                                re      => qr{/foo/},
-                                timeout => 3 
-                                }
-                            } );
- sub foo : Global
- {
+    override => {
+        re      => qr{/foo/},
+        timeout => 3 
+    }
+ });
+ 
+ sub foo : Global {
    my ($self,$c) = @_;
    $c->alarm->off;      # negates the override in config
    $c->alarm->snooze;   # same thing as off()
@@ -674,10 +674,12 @@ The Time::HiRes alarm() function ought to be used internally instead of the CORE
 function, but it behaved unpredictably in the test cases. See the comments in the source
 for more details.
 
-Win32 systems don't have alarm() or other signal handlers. That's not really the fault
-of this module, but listed here in case you try using this on a Win32 system and it balks.
-You might try setting the PERL_SIGNALS environment variable to C<unsafe> but that wouldn't
-be very safe, now would it?
+Win32 systems don't have alarm() or other signal handlers, so B<use_native_signals>
+gets turned on if running under Win32.
+
+Some users report that Sys::SigAction does not play nicely with FCGI,
+so you can set the B<use_native_signals> to a true value to use the built-in
+%SIG handlers instead of Sys::SigAction.
 
 =head1 AUTHOR
 
